@@ -5,7 +5,8 @@
 APP = helloworld
 
 # all source are stored in SRCS-y
-SRCS-y := main.c
+SRCS-y := test.c
+
 
 # Build using pkg-config variables if possible
 ifeq ($(shell pkg-config --exists libdpdk && echo 0),0)
