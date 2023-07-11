@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Attach to Virtual Machine",
+        "type": "cppdbg",
+        "request": "attach",
+        "program": "/home/dev/dpdk/dpdkStudy/arp/build/sk.arp",
+        "processId": "${command:pickProcess}",
+        "linux": {
+          "MIMode": "gdb",
+          "miDebuggerPath": "gdb"
+        },
+        "osx": {
+          "MIMode": "lldb"
+        },
+        "windows": {
+          "MIMode": "gdb",
+          "miDebuggerPath": "gdb.exe"
+        }
+      }
+    ]
+  }

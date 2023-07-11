@@ -6,6 +6,7 @@ APP = sk.arp
 
 # all source are stored in SRCS-y
 SRCS-y := sk_arp.c
+#SRCS-y := gpt_arp.c
 #SRCS-y := test.c
 
 # Build using pkg-config variables if possible
@@ -20,8 +21,10 @@ static: build/$(APP)-static
 
 PKGCONF ?= pkg-config
 
+CFLAGS += -g
+
 PC_FILE := $(shell $(PKGCONF) --path libdpdk 2>/dev/null)
-CFLAGS += -O3 $(shell $(PKGCONF) --cflags libdpdk)
+CFLAGS += -O0 $(shell $(PKGCONF) --cflags libdpdk)
 LDFLAGS_SHARED = $(shell $(PKGCONF) --libs libdpdk)
 LDFLAGS_STATIC = -Wl,-Bstatic $(shell $(PKGCONF) --static --libs libdpdk)
 
@@ -50,7 +53,6 @@ RTE_TARGET ?= $(notdir $(abspath $(dir $(firstword $(wildcard $(RTE_SDK)/*/.conf
 
 include $(RTE_SDK)/mk/rte.vars.mk
 
-CFLAGS += -O3
 
 include $(RTE_SDK)/mk/rte.extapp.mk
 
