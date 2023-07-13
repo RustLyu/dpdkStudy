@@ -122,6 +122,89 @@ void set_ipv4_hdr(struct rte_ipv4_hdr* hdr)
 void set_icmp_hdr(struct rte_icmp_hdr* hdr)
 {}
 
+static uint16_t ng_checksum(uint16_t *addr, int count)
+{
+
+	register long sum = 0;
+
+	while (count > 1)
+	{
+		sum += *(unsigned short *)addr++;
+		count -= 2;
+	}
+
+	if (count > 0)
+	{
+		sum += *(unsigned char *)addr;
+	}
+
+	while (sum >> 16)
+	{
+		sum = (sum & 0xffff) + (sum >> 16);
+	}
+
+	return ~sum;
+}
+
+static int ng_encode_icmp_pkt(uint8_t *msg, uint8_t *dst_mac,
+							  uint32_t sip, uint32_t dip, uint16_t id, uint16_t seqnb)
+{
+
+	// 1 ether
+	struct rte_ether_hdr *eth = (struct rte_ether_hdr *)msg;
+	rte_memcpy(eth->src_addr.addr_bytes, LOCAL_MAC, RTE_ETHER_ADDR_LEN);
+	rte_memcpy(eth->dst_addr.addr_bytes, dst_mac, RTE_ETHER_ADDR_LEN);
+	eth->ether_type = htons(RTE_ETHER_TYPE_IPV4);
+
+	// 2 ip
+	struct rte_ipv4_hdr *ip = (struct rte_ipv4_hdr *)(msg + sizeof(struct rte_ether_hdr));
+	ip->version_ihl = 0x45;
+	ip->type_of_service = 0;
+	ip->total_length = htons(sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_icmp_hdr));
+	ip->packet_id = 0;
+	ip->fragment_offset = 0;
+	ip->time_to_live = 64;			  // ttl = 64
+	ip->next_proto_id = IPPROTO_ICMP; //注意这里，与之前ip包的不同
+	ip->src_addr = sip;
+	ip->dst_addr = dip;
+
+	ip->hdr_checksum = 0;
+	ip->hdr_checksum = rte_ipv4_cksum(ip);
+
+	// 3 icmp
+	struct rte_icmp_hdr *icmp = (struct rte_icmp_hdr *)(msg + sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr));
+	icmp->icmp_type = RTE_IP_ICMP_ECHO_REPLY;
+	icmp->icmp_code = 0;
+	icmp->icmp_ident = id;
+	icmp->icmp_seq_nb = seqnb;
+
+	icmp->icmp_cksum = 0;
+	icmp->icmp_cksum = ng_checksum((uint16_t *)icmp, sizeof(struct rte_icmp_hdr));
+
+	return 0;
+}
+
+static struct rte_mbuf *ng_send_icmp(struct rte_mempool *mbuf_pool, uint8_t *dst_mac,
+									 uint32_t sip, uint32_t dip, uint16_t id, uint16_t seqnb)
+{
+
+	const unsigned total_length = sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_icmp_hdr);
+
+	struct rte_mbuf *mbuf = rte_pktmbuf_alloc(mbuf_pool);
+	if (!mbuf)
+	{
+		rte_exit(EXIT_FAILURE, "rte_pktmbuf_alloc\n");
+	}
+
+	mbuf->pkt_len = total_length;
+	mbuf->data_len = total_length;
+
+	uint8_t *pkt_data = rte_pktmbuf_mtod(mbuf, uint8_t *);
+	ng_encode_icmp_pkt(pkt_data, dst_mac, sip, dip, id, seqnb);
+
+	return mbuf;
+}
+
 int main(int argc, char** argv)
 {
 
@@ -131,7 +214,7 @@ int main(int argc, char** argv)
     {
         rte_exit(EXIT_FAILURE, "failed init eal dpdk");
     }
-    rte_log_set_level(RTE_LOG_DEBUG, 0); 
+    rte_log_set_global_level(RTE_LOG_DEBUG); 
     // find cpu core
     uint16_t port_id = rte_eth_find_next_owned_by(0, RTE_ETH_DEV_NO_OWNER);
     if(port_id == RTE_MAX_ETHPORTS)
@@ -175,7 +258,7 @@ int main(int argc, char** argv)
                 
                     if(arp_hdr->arp_data.arp_tip == "192.168.0.127")
                     {
-                        printf("recv: ip equal\n");
+                        //printf("recv: ip equal\n");
                     }
                     else
                     {
@@ -185,12 +268,22 @@ int main(int argc, char** argv)
                 else
                 {
                     struct rte_ipv4_hdr* ip_hdr = (struct rte_ipv4_hdr*)(eth_hdr + 1);
+                    //printf("recv proto_id:%d\n", ip_hdr->next_proto_id);
+                    //print_ip_address(ip_hdr->src_addr);
+                    //print_ip_address(ip_hdr->dst_addr);
                     /// ICMP
                     if(ip_hdr->next_proto_id == IPPROTO_ICMP)
                     {
-
+                        printf("recv: icmp msg\n");
                         struct rte_icmp_hdr* icmp_hdr = (struct rte_icmp_hdr*)(ip_hdr + 1);
 
+                        /*struct rte_mbuf *txbuf = ng_send_icmp(mbuf_pool, eth_hdr->src_addr.addr_bytes,
+														  ip_hdr->dst_addr, ip_hdr->src_addr, icmp_hdr->icmp_ident, icmp_hdr->icmp_seq_nb);
+
+                        rte_eth_tx_burst(port_id, 0, &txbuf, 1);
+                        rte_pktmbuf_free(txbuf);
+                        rte_pktmbuf_free(buf[i]);*/
+                        
                         struct rte_mbuf* tx_pkt = rte_pktmbuf_alloc(mbuf_pool);
 
                         struct rte_ether_hdr* tx_eth_hdr = rte_pktmbuf_mtod(tx_pkt, struct rte_ether_hdr*);
@@ -240,7 +333,13 @@ int main(int argc, char** argv)
                         tx_icmp_hdr->icmp_ident = icmp_hdr->icmp_ident;
                         tx_icmp_hdr->icmp_seq_nb = icmp_hdr->icmp_seq_nb;
                         tx_icmp_hdr->icmp_cksum = 0;
-                        tx_icmp_hdr->icmp_cksum = rte_raw_cksum(tx_icmp_hdr, sizeof(struct rte_icmp_hdr));
+                        tx_icmp_hdr->icmp_cksum = ng_checksum((uint16_t *)tx_icmp_hdr, sizeof(struct rte_icmp_hdr));
+                        //uint16_t tt = rte_raw_cksum((struct rte_mbuf*)tx_icmp_hdr, sizeof(struct rte_icmp_hdr));
+
+                        //int jj = rte_raw_cksum_mbuf ((struct rte_mbuf*)tx_icmp_hdr, 0, sizeof(struct rte_icmp_hdr), &tt);
+
+                        //printf("cksum:%d\n", tt);
+                        //printf("tx_icmp_hdr->icmp_cksum :%d\n", tx_icmp_hdr->icmp_cksum);
                         //set_ipv4_hdr(ip_hdr);
                         //set_icmp_hdr(icmp_hdr);
                         //tx_buf[0] = tx_pkt;
@@ -255,10 +354,9 @@ int main(int argc, char** argv)
                         else
                         {
                             
-                            uint64_t error_no = 0;//rte_eth_tx_burst_error(port_id, 0);
+                            uint64_t error_no = 0;//rte_eth_tx_burst_error();
                             printf("recv: icmp msg failed error no:\n");
                         }
-                        printf("recv: icmp msg\n");
                     }
                 }
             
